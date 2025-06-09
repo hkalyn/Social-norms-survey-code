@@ -1,0 +1,445 @@
+---
+title: "Polychoric PCA"
+output: html_document
+date: "2025-02-05"
+---
+
+# setup
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE, cache=TRUE)
+```
+
+
+# load libraries
+```{r cache=TRUE}
+library(psych)
+library(polycor)
+library(rmarkdown)
+library(knitr)
+library(tidyverse)
+library(dplyr)
+library(ggplot2)
+library(gridExtra)
+library(grid)
+library(corrplot)
+library(RColorBrewer)
+library(ggpubr)
+library(jtools)
+library(broom.mixed)
+library(rstan)
+library(brms)
+library(ggridges)
+library(ggplot2)
+library(tidybayes)
+library(reshape2)
+library(bayesplot)
+library(broom)
+library(effects)
+library(ggeffects)
+library(RcppEigen)
+library(StanHeaders)
+library(loo)
+library(moments)
+library(cmdstanr)
+library(MetBrewer) 
+library(ggrepel)
+library(performance)
+
+```
+
+# load data
+```{r, echo=FALSE}
+# load my relevant data for trainees and faculty
+
+```
+
+# Faculty correlation
+```{r, echo=TRUE}
+# Select the columns for the correlation matrix
+vars <- c("talk_values_trainees", "talk_values_colleagues", "vc_collaborators", "vc_dept_colleagues", "FFP", "QRP","Sat_RC_oncampus", "Sat_RC_offcampus","Sat_FS_internal", "Sat_FS_external","Sat_PRP_personal","Sat_PRP_staff")
+
+# Filter the data to include only the specified columns
+cor_data <- fac_data[vars]
+
+# Calculate the Spearman correlation matrix
+cor_matrix <- cor(cor_data, use = "pairwise.complete.obs", method = "spearman")
+
+# Print the correlation matrix
+print(cor_matrix)
+
+# Plot the correlation matrix
+corrplot(cor_matrix, 
+         method = "color", 
+         type = "lower", 
+         tl.col = "black",        # Text color for labels
+         tl.srt = 45,             # Text rotation for labels
+         tl.cex = 0.8,            # Text size for labels
+         addCoef.col = "black",   # Add correlation coefficients
+         number.cex = 0.6,        # Size of correlation numbers
+         col = colorRampPalette(c("red", "white", "blue"))(200),
+         title = "Spearman Correlation Matrix", 
+         mar = c(0, 0, 2, 0))     # Add some margin for the title
+
+```
+
+# Extract PPCA
+```{r cache=TRUE}
+# Example dataset: Use your actual ordinal predictors
+ordinal_data <- fac_data[, c("talk_values_trainees", "talk_values_colleagues", "vc_collaborators", "vc_dept_colleagues", "FFP", "QRP","Sat_RC_oncampus", "Sat_RC_offcampus","Sat_FS_internal", "Sat_FS_external","Sat_PRP_personal","Sat_PRP_staff")]  
+
+# Impute values for NAs
+#ordinal_data <- ordinal_data %>%
+  #mutate(across(everything(), ~ ifelse(is.na(.), median(., na.rm = TRUE), .)))
+
+#Remove NAs
+ordinal_data <- na.omit(ordinal_data)  # Removes all rows with any NA
+
+# Compute the polychoric correlation matrix
+poly_matrix <- hetcor(ordinal_data, ML = TRUE)$correlations  # Maximum likelihood estimation
+
+```
+
+```{r cache=TRUE}
+# Scree plot to determine number of components
+fa.parallel(poly_matrix, fa = "pc", n.iter = 242, n.obs = nrow(ordinal_data)) # change n.iter to match number of observations in ordinal_data
+
+```
+
+```{r cache=TRUE}
+# Run PCA on the polychoric correlation matrix
+pca_result <- principal(poly_matrix, nfactors = 4, rotate = "varimax")  # Adjust 'nfactors' based on scree plot
+
+# Print PCA summary
+print(pca_result, digits = 3)
+```
+
+
+```{r cache=TRUE}
+# Check the structure to verify it's the correct matrix. Should be 'n' variables (10 here) and 4 PCs
+dim(pca_result$loadings)
+
+# Convert loadings to a matrix
+loadings_matrix <- as.matrix(pca_result$loadings)
+
+# Compute PCA scores (retain only first 4 components)
+pca_scores <- scale(ordinal_data) %*% loadings_matrix[, 1:4]
+
+# Convert PCA scores to a dataframe for ggplot
+pca_scores_df <- data.frame(PC1 = pca_scores[,1], PC2 = pca_scores[,2], PC3 = pca_scores[,3], PC4 = pca_scores[,4])
+
+# Convert loadings to a dataframe
+loadings_df <- as.data.frame(loadings_matrix[,1:4])  # Only first 2 PCs
+loadings_df$Variable <- rownames(loadings_df)  # Add variable names
+
+# Plot PCA Scores (Observations)
+ggplot(pca_scores_df, aes(x = PC1, y = PC2)) +
+  geom_point(color = "blue") +
+  geom_text_repel(aes(label = rownames(pca_scores_df)), size = 3) +
+  theme_minimal() +
+  labs(title = "PCA Biplot: Observations", x = "PC1", y = "PC2")
+
+# Plot the Loadings
+ggplot(loadings_df, aes(x = RC1, y = RC2, label = Variable)) +
+  geom_point(color = "red") +
+  geom_text_repel(size = 3) +
+  theme_minimal() +
+  labs(title = "PCA Biplot: Variable Loadings", x = "PC1", y = "PC2")
+
+# Check dimensions
+head(pca_scores)
+dim(pca_scores)  # Should match (rows in ordinal_data, 4)
+
+# Plot PC3 vs PC4 for observations
+ggplot(pca_scores_df, aes(x = PC3, y = PC4)) +
+  geom_point(color = "blue") +
+  geom_text_repel(aes(label = rownames(pca_scores_df)), size = 3) +
+  theme_minimal() +
+  labs(title = "PCA Biplot: Observations (PC3 vs PC4)", x = "PC3", y = "PC4")
+
+# Plot PC3 vs PC4 for variable loadings
+ggplot(loadings_df, aes(x = RC3, y = RC4, label = Variable)) +
+  geom_point(color = "red") +
+  geom_text_repel(size = 3) +
+  theme_minimal() +
+  labs(title = "PCA Biplot: Variable Loadings (PC3 vs PC4)", x = "PC3", y = "PC4")
+
+```
+
+```{r cache=TRUE}
+print(pca_result$values)  # Eigenvalues of components
+
+```
+
+
+```{r cache=TRUE}
+print(pca_result$loadings, cutoff = 0.3)  # Show only meaningful loadings
+
+```
+
+```{r cache=TRUE}
+# Correct PCA transformation
+pca_scores <- as.matrix(fac_data[, c("talk_values_trainees", "talk_values_colleagues", "vc_collaborators", "vc_dept_colleagues", "FFP", "QRP","Sat_RC_oncampus", "Sat_RC_offcampus","Sat_FS_internal", "Sat_FS_external","Sat_PRP_personal","Sat_PRP_staff")]) %*% pca_result$loadings[, 1:4]
+
+# Convert to dataframe
+pca_scores_df <- as.data.frame(pca_scores)
+
+# Rename components
+colnames(pca_scores_df) <- c("PC1_AcademicSupport_VC", "PC2_QRP_FFP", "PC3_talkvalues", "PC4_PRP")
+
+# Add ID column
+pca_scores_df$id <- fac_data$id  
+
+# Merge with original dataset
+all_data_with_pca <- cbind(fac_data, pca_scores_df)
+
+# Drop the duplicated id column
+all_data_with_pca <- all_data_with_pca[, !duplicated(colnames(all_data_with_pca))]
+
+# Check results
+head(all_data_with_pca)
+
+```
+
+# Once you extract the component scores, the remaining code should be performed on the relevent norm items. We provide Communality 1 and 2 as an example. Note that reverse coded items need to be handled appropriately when extracting the differential score.
+
+# C1_diff Reverse Coded item (actual - ideal)
+```{r cache=TRUE}
+# Calculate a difference score for each item
+all_data_C1_diffmodel <- all_data_with_pca %>%
+  mutate(C1_diff = C12 - C11) 
+
+# Measure skewness
+skew(all_data_C1_diffmodel$C1_diff, na.rm = TRUE)
+hist(all_data_C1_diffmodel$C1_diff)
+
+# Remove NA only in C11
+all_data_C1_diffmodel <- all_data_C1_diffmodel %>%
+  filter(!is.na(C1_diff))
+
+# Convert 'C11' to an ordered factor
+all_data_C1_diffmodel$C1_diff <- factor(all_data_C1_diffmodel$C1_diff, ordered = TRUE)  
+all_data_C1_diffmodel$UnderrepY <- factor(all_data_C1_diffmodel$UnderrepY)
+
+# Include only Man and Woman
+all_data_C1_diffmodel <- all_data_C1_diffmodel %>%
+  filter(Gender %in% c("Man", "Woman")) %>%
+  mutate(Gender = factor(Gender))  # Re-factor to remove unused levels
+
+# Set reference category
+all_data_C1_diffmodel$Gender <- relevel(all_data_C1_diffmodel$Gender, ref = "Man")
+all_data_C1_diffmodel$UnderrepY <- relevel(all_data_C1_diffmodel$UnderrepY, ref = "No")
+
+# Set priors
+prior <- c(
+  # Prior for the intercept (thresholds between categories)
+  prior(normal(0, 5), class = "Intercept"),  # Allow for flexibility in threshold positions
+
+  # Priors for the coefficients (effects of independent variables)
+  prior(normal(0, 5), class = "b"),          # Priors for the coefficients of the predictors
+
+  # Priors for random effects (e.g., id random effect)
+  prior(normal(0, 1), class = "sd")
+)
+
+# Define the Bayesian model
+bayes_C1_diffmodel <- brm(
+  formula = C1_diff ~ Gender + UnderrepY + PC1_AcademicSupport_VC + PC2_QRP_FFP + PC3_talkvalues + PC4_PRP + (1 | id),
+  data = all_data_C1_diffmodel,
+  family = gaussian(),
+  prior = prior,
+  chains = 4, 
+  iter = 10000, 
+  warmup = 2500, 
+  cores = 4,
+  control = list(adapt_delta = 0.9995, max_treedepth = 18)
+)
+
+# Print summary of the model
+summary(bayes_C1_diffmodel)
+
+# plot model estimates 
+plot_summs(bayes_C1_diffmodel)
+
+#Plot the fit of the model (do model predictions align with the data?)
+par(ask = FALSE)
+plot(bayes_C1_diffmodel, type = "bars")
+
+# Check model fit
+pp_check(bayes_C1_diffmodel)
+
+# Calculate conditional and marginal R2 (variance explained by fixed and random effects)
+r2_bayes(bayes_C1_diffmodel)
+
+```
+
+
+```{r cache=TRUE}
+# Extract posterior samples
+post_samples_model <- as_draws_df(bayes_C1_diffmodel)
+
+# keep all b_ but exclude the columns named in the second line
+model_t <- post_samples_model[, grep("^b_", colnames(post_samples_model))]  # keep all b_ terms
+model_t <- model_t[, grep("^b_UnderrepYPrefernottoanswer|^b_UnderrepYImnotsure", colnames(model_t), invert = TRUE)]  # drop those 2
+
+# Convert to long format
+model_t1 <- model_t %>%
+  pivot_longer(cols = everything(), names_to = "variable", values_to = "value") %>%
+  filter(!grepl("Intercept", variable))
+
+# Optional: Set factor levels for clean y-axis
+model_t1$variable <- factor(model_t1$variable, levels = unique(model_t1$variable))
+
+# Plot
+model1_plot <- ggplot(model_t1, aes(x = value, y = variable, fill = after_stat(quantile))) +
+  stat_density_ridges(
+    rel_min_height = 0.01, 
+    geom = "density_ridges_gradient", 
+    linewidth = 0.3,
+    calc_ecdf = TRUE, 
+    quantiles = c(0.025, 0.975)
+  ) +
+  scale_fill_manual(
+    name = NULL, 
+    values = c("white", met.brewer("Hokusai2")[3], "white")
+  ) +
+  theme_classic(base_size = 15) + 
+  geom_vline(xintercept = 0, size = 0.5, color = "black", linetype = "dashed") + 
+  scale_y_discrete(expand = c(0.01, 0))
+
+# Add final tweaks
+modelC1 <- model1_plot + 
+  geom_hline(yintercept = 2:10, linewidth = 0.1, linetype = "dotted") + 
+  labs(x = "Estimate", y = NULL) +  
+  theme(legend.position = "none", text = element_text(size = 14, colour = "black", family = "times"))
+
+# Show plot
+modelC1
+
+```
+
+# C2_diff NOT Reverse Coded item (ideal - actual)
+```{r cache=TRUE}
+# Calculate a difference score for each item
+all_data_C2_diffmodel <- all_data_with_pca %>%
+  mutate(C2_diff = C21 - C22) 
+
+# Measure skewness
+skew(all_data_C2_diffmodel$C2_diff, na.rm = TRUE)
+hist(all_data_C2_diffmodel$C2_diff)
+
+# Remove NAs only
+all_data_C2_diffmodel <- all_data_C2_diffmodel %>%
+  filter(!is.na(C2_diff))
+
+# Convert 'C21' to an ordered factor
+all_data_C2_diffmodel$C2_diff <- factor(all_data_C2_diffmodel$C2_diff, ordered = TRUE)  
+all_data_C2_diffmodel$UnderrepY <- factor(all_data_C2_diffmodel$UnderrepY)
+
+# Include only Man and Woman
+all_data_C2_diffmodel <- all_data_C2_diffmodel %>%
+  filter(Gender %in% c("Man", "Woman")) %>%
+  mutate(Gender = factor(Gender))  # Re-factor to remove unused levels
+
+# Set reference category
+all_data_C2_diffmodel$Gender <- relevel(all_data_C2_diffmodel$Gender, ref = "Man")
+all_data_C2_diffmodel$UnderrepY <- relevel(all_data_C2_diffmodel$UnderrepY, ref = "No")
+
+# Set priors
+prior <- c(
+  # Prior for the intercept (thresholds between categories)
+  prior(normal(0, 5), class = "Intercept"),  # Allow for flexibility in threshold positions
+
+  # Priors for the coefficients (effects of independent variables)
+  prior(normal(0, 5), class = "b"),          # Priors for the coefficients of the predictors
+
+  # Priors for random effects (e.g., id random effect)
+  prior(normal(0, 1), class = "sd")
+)
+
+# Define the Bayesian model
+bayes_C2_diffmodel <- brm(
+  formula = C2_diff ~ Gender + UnderrepY + PC1_AcademicSupport_VC + PC2_QRP_FFP + PC3_talkvalues + PC4_PRP + (1 | id),
+  data = all_data_C2_diffmodel,
+  family = cumulative(link = "logit"),
+  prior = prior,
+  chains = 4, 
+  iter = 10000, 
+  warmup = 2500, 
+  cores = 4,
+  control = list(adapt_delta = 0.9995, max_treedepth = 18)
+)
+
+# Print summary of the model
+summary(bayes_C2_diffmodel)
+
+# plot model estimates 
+plot_summs(bayes_C2_diffmodel)
+
+#Plot the fit of the model (do model predictions align with the data?)
+par(ask = FALSE)
+plot(bayes_C2_diffmodel, type = "bars", ask = FALSE)
+
+# Check model fit
+pp_check(bayes_C2_diffmodel)
+
+# Calculate conditional and marginal R2 (variance explained by fixed and random effects)
+r2_bayes(bayes_C2_diffmodel)
+
+```
+
+
+```{r cache=TRUE}
+# Extract posterior samples using the 'as_draws_df' function
+post_samples_model <- as_draws_df(bayes_C2_diffmodel)
+
+# keep all b_ but exclude the columns named in the second line
+model_t <- post_samples_model[, grep("^b_", colnames(post_samples_model))]  # keep all b_ terms
+model_t <- model_t[, grep("^b_UnderrepYPrefernottoanswer|^b_UnderrepYImnotsure", colnames(model_t), invert = TRUE)]  # drop those 2
+
+# Convert to long format
+model_t1 <- model_t %>%
+  pivot_longer(cols = everything(), names_to = "variable", values_to = "value") %>%
+  filter(!grepl("Intercept", variable))
+
+# Ensure y-axis labels only include remaining predictor names
+model_t1$variable <- factor(model_t1$variable, levels = unique(model_t1$variable))
+
+# Convert to long format and remove intercepts
+model_t1 <- melt(model_t) %>%
+  filter(!grepl("Intercept", variable))  # Remove all intercepts
+
+## This plot specifies the upper and lower CIs and colors the inner 95% region.
+model2_plot <- ggplot(model_t1, aes(x = value, y = variable, fill = after_stat(quantile))) +
+  stat_density_ridges(
+    rel_min_height = 0.01, 
+    geom = "density_ridges_gradient", 
+    linewidth = 0.3,
+    calc_ecdf = TRUE, 
+    quantiles = c(0.025, 0.975)
+  ) +
+  scale_fill_manual(
+    name = NULL, 
+    values = c("white", met.brewer("Hokusai2")[3], "white")  # White for tails, color for 95% CI
+  ) +
+  theme_classic(base_size = 15) + 
+  geom_vline(xintercept = 0, size = 0.5, color = "black", linetype = "dashed") + 
+  scale_y_discrete(expand = c(0.01, 0))  # This removes unwanted labels
+
+modelC2 <- model2_plot + 
+  geom_hline(yintercept = 2:10, linewidth = 0.1, linetype = "dotted") + 
+  labs(x = "Estimate", y = NULL) +  # Removes y-axis title
+  theme(legend.position = "none", text = element_text(size = 14, colour = "black", family = "times"))
+
+# Show the plot
+modelC2
+
+```
+
+
+
+
+
+
+
+
+

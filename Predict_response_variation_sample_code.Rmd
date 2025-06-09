@@ -1,0 +1,643 @@
+---
+title: "Untitled"
+output: html_document
+date: "2025-03-03"
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(cache = TRUE, cache=TRUE)
+
+Sys.setenv(R_DEFAULT_DEVICE = "png")  # Force PNG as default
+options(device = "png")
+```
+
+```{r}
+#### Load libraries ####
+library(rmarkdown)
+library(knitr)
+library(tidyverse)
+library(dplyr)
+
+library(gridExtra)
+library(grid)
+library(corrplot)
+library(RColorBrewer)
+
+library(brms)
+library(cmdstanr)
+library(rstan)
+library(loo)
+library(performance)
+
+library(bayesplot)
+library(tidybayes)
+library(broom.mixed)
+library(effects)
+library(ggeffects)
+
+library(ggplot2)
+library(ggpubr)
+library(ggridges)
+library(MetBrewer)
+library(jtools)    
+```
+
+```{r, cache=TRUE}
+# load my relevant data - trainees and faculty
+
+```
+
+# This code was run iteratively for every norm survey item, running separte models for faculty and trainees. We show the code for the first item, Communality 1 'ideal' response (C11). Replacing 'C11' with the norm code of interest will produce all results for our models in Appendix 1 (SI).
+```{r cache=TRUE}
+# Look at your summary stats to pick your priors
+summary(trainee_data$C11)
+table(trainee_data$C11)  # Frequency table for each category
+hist(trainee_data$C11)
+
+# Visualize group differences.
+ggplot(trainee_data, aes(x = Age, y = C11)) +
+  geom_point(color = "skyblue", alpha = 0.6) +  # Scatterplot with transparency
+  labs(title = "C11 by Age", x = "Age", y = "C11") +
+  theme_minimal()
+
+ggplot(trainee_data, aes(x = Gender, y = C11)) +
+  geom_boxplot(fill = "skyblue") +
+  labs(title = "C11 by Category", x = "Gender", y = "C11") +
+  theme_minimal()
+
+ggplot(trainee_data, aes(x = factor(Position, 
+                                levels = c("MSc student", "PhD student", 
+                                           "Post-doctoral fellow", 
+                                           "Assistant Professor", 
+                                           "Associate Professor", 
+                                           "Professor", "Other Researcher")), 
+                     y = C11)) +
+  geom_boxplot(fill = "skyblue") +
+  labs(title = "C11 by Position", x = "Position", y = "C11") +
+  theme_minimal() +
+  theme(axis.text.x = element_text(angle = 45, hjust = 1))  # Rotate labels
+
+ggplot(trainee_data, aes(x = First_gen, y = C11)) +
+  geom_boxplot(fill = "skyblue") +
+  labs(title = "C11 by trainee_data", x = "First_gen", y = "C11") +
+  theme_minimal()
+
+ggplot(trainee_data, aes(x = International, y = C11)) +
+  geom_boxplot(fill = "skyblue") +
+  labs(title = "C11 by trainee data", x = "International", y = "C11") +
+  theme_minimal()
+
+ggplot(trainee_data, aes(x = Department, y = C11)) +
+  geom_boxplot(fill = "skyblue") +
+  labs(title = "C11 by Department", x = "Department", y = "C11") +
+  theme_minimal() +
+  theme(axis.text.x = element_text(angle = 45, hjust = 1))
+
+ggplot(trainee_data, aes(x = Domain, y = C11)) +
+  geom_boxplot(fill = "skyblue") +
+  labs(title = "C11 by Category", x = "Domain", y = "C11") +
+  theme_minimal()
+
+ggplot(trainee_data, aes(x = Uni, y = C11)) +
+  geom_boxplot(fill = "skyblue") +
+  labs(title = "C11 by Category", x = "Uni", y = "C11") +
+  theme_minimal()
+
+ggplot(trainee_data, aes(x = indpart, y = C11)) +
+  geom_boxplot(fill = "skyblue") +
+  labs(title = "C11 by Category", x = "indpart", y = "C11") +
+  theme_minimal()
+
+ggplot(trainee_data, aes(x = patentr, y = C11)) +
+  geom_boxplot(fill = "skyblue") +
+  labs(title = "C11 by Category", x = "patentr", y = "C11") +
+  theme_minimal()
+
+ggplot(trainee_data, aes(x = privatecon, y = C11)) +
+  geom_boxplot(fill = "skyblue") +
+  labs(title = "C11 by Category", x = "privatecon", y = "C11") +
+  theme_minimal()
+
+```
+
+# gender C11
+```{r, cache=TRUE}
+# Remove NA only in C11
+trainee_data_C11 <- trainee_data %>%
+  filter(!is.na(C11))
+
+# Convert 'C11' to an ordered factor
+trainee_data_C11$C11 <- factor(trainee_data_C11$C11, ordered = TRUE)  
+
+# Include only Man and Woman
+trainee_data_C11 <- trainee_data_C11 %>%
+  filter(Gender %in% c("Man", "Woman")) %>%
+  mutate(Gender = factor(Gender))  # Re-factor to remove unused levels
+
+# Set reference category
+trainee_data_C11$Gender <- relevel(trainee_data_C11$Gender, ref = "Man")
+
+# Set priors
+prior <- c(
+  # Prior for the intercept (thresholds between categories)
+  prior(normal(0, 5), class = "Intercept"),  # Allow for flexibility in threshold positions
+
+  # Priors for the coefficients (effects of independent variables)
+  prior(normal(0, 5), class = "b"),          # Priors for the coefficients of the predictors
+  prior(normal(0, 2), class = "sd")          # random effects (group-level variables)
+)
+
+# Run the Bayesian model
+gender_model <- brm(C11 ~ Gender + (1|id), 
+             data = trainee_data_C11, 
+             family = cumulative(link = "logit"),
+             prior = prior,
+             chains = 6,           
+             cores = 8,             
+             iter = 10000,          
+             warmup = 2000,        
+             thin = 1,             
+             seed = 123,           
+             control = list(adapt_delta = 0.9995, max_treedepth = 18),  
+             save_pars = save_pars(all = TRUE),  
+             threads = threading(24),                     # Parallel computation
+             backend = "cmdstanr")  # Use prior variable here
+
+# Show summary of the model
+summary(gender_model)
+
+# plot model estimates 
+plot_summs(gender_model)
+
+#Plot the fit of the model (do model predictions align with the data?)
+plot(gender_model, type = "bars", ask=FALSE)
+
+# Run posterior predictive check
+pp_check(gender_model)
+
+# calc r2
+r2_bayes(gender_model)
+
+# Compute LOO using the loo() function
+loo_gender_model <- loo(gender_model)
+
+# Print the result
+print(loo_gender_model)
+```
+
+
+# position
+```{r, cache=TRUE}
+# Remove NA only in C11
+trainee_data_C11 <- trainee_data %>%
+  filter(!is.na(C11))
+
+# Convert 'C11' to an ordered factor
+trainee_data_C11$C11 <- factor(trainee_data_C11$C11, ordered = TRUE)  
+
+# Subset the data based on multiple columns
+trainee_data_C11 <- trainee_data_C11 %>%
+    filter(
+        Position %in% c("MSc student","PhD student","Post-doctoral fellow"))
+
+# Convert 'Position' to a factor 
+trainee_data_C11$Position <- factor(trainee_data_C11$Position, levels = sort(unique(trainee_data_C11$Position, ordered = TRUE)))
+
+# Set priors
+prior <- c(
+  # Prior for the intercept (thresholds between categories)
+  prior(normal(0, 5), class = "Intercept"),  # Allow for flexibility in threshold positions
+
+  # Priors for the coefficients (effects of independent variables)
+  prior(normal(0, 5), class = "b"),          # Priors for the coefficients of the predictors
+
+  # Priors for random effects (e.g., id random effect)
+  prior(normal(0, 2), class = "sd")
+)
+
+# Run the Bayesian model
+position_model <- brm(C11 ~ Position + (1|id), 
+             data = trainee_data_C11, 
+             family = cumulative(link = "logit"),
+             prior = prior,
+             chains = 6,           
+             cores = 8,             
+             iter = 10000,          
+             warmup = 2000,        
+             thin = 1,             
+             seed = 123,           
+             control = list(adapt_delta = 0.9995, max_treedepth = 18),  
+             save_pars = save_pars(all = TRUE),  
+             threads = threading(24),                     # Parallel computation
+             backend = "cmdstanr")  # Use prior variable here
+
+#Plot summary
+summary(position_model)
+
+# plot model estimates 
+plot_summs(position_model)
+
+#Plot the fit of the model (do model predictions align with the data?)
+plot(position_model, type = "bars", ask=FALSE)
+
+# Run posterior predictive check
+pp_check(position_model)
+
+
+```
+
+# international
+```{r, cache=TRUE}
+# Remove NA only in C11
+trainee_data_C11 <- trainee_data %>%
+  filter(!is.na(C11))
+
+# Convert 'C11' to an ordered factor
+trainee_data_C11$C11 <- factor(trainee_data_C11$C11, ordered = TRUE)  
+
+# Convert 'International' to a factor 
+trainee_data_C11$International <- factor(trainee_data_C11$International, levels = sort(unique(trainee_data_C11$International, ordered = TRUE)))
+
+# Set priors
+prior <- c(
+  # Prior for the intercept (thresholds between categories)
+  prior(normal(0, 5), class = "Intercept"),  # Allow for flexibility in threshold positions
+
+  # Priors for the coefficients (effects of independent variables)
+  prior(normal(0, 5), class = "b"),          # Priors for the coefficients of the predictors
+
+  # Priors for random effects (e.g., id random effect)
+  prior(normal(0, 2), class = "sd")
+)
+
+# Run the Bayesian model
+int_model <- brm(C11 ~ International + (1|id), 
+             data = trainee_data_C11, 
+             family = cumulative(link = "logit"),
+             prior = prior,
+             chains = 6,           
+             cores = 8,             
+             iter = 10000,          
+             warmup = 2000,        
+             thin = 1,             
+             seed = 123,           
+             control = list(adapt_delta = 0.9995, max_treedepth = 18),  
+             save_pars = save_pars(all = TRUE),  
+             threads = threading(24),                     # Parallel computation
+             backend = "cmdstanr")  # Use prior variable here
+
+#Plot summary
+summary(int_model)
+
+# plot model estimates 
+plot_summs(int_model)
+
+#Plot the fit of the model (do model predictions align with the data?)
+plot(int_model, type = "bars", ask=FALSE)
+
+# Run posterior predictive check
+pp_check(int_model)
+
+```
+
+
+# domain
+```{r, cache=TRUE}
+# Remove NA only in C11
+trainee_data_C11 <- trainee_data %>%
+  filter(!is.na(C11))
+
+# Convert 'C11' to an ordered factor
+trainee_data_C11$C11 <- factor(trainee_data_C11$C11, ordered = TRUE)  
+
+# Subset the data to exclude specific values
+trainee_data_C11 <- trainee_data_C11 %>%
+    filter(
+        !Domain %in% c("Other"))  # , "Prefer not to answer"
+
+# Convert 'Position' to a factor, NOT ordered 
+trainee_data_C11$Domain <- factor(trainee_data_C11$Domain, levels = sort(unique(trainee_data_C11$Domain)))
+
+# Set priors
+prior <- c(
+  # Prior for the intercept (thresholds between categories)
+  prior(normal(0, 5), class = "Intercept"),  # Allow for flexibility in threshold positions
+
+  # Priors for the coefficients (effects of independent variables)
+  prior(normal(0, 5), class = "b"),          # Priors for the coefficients of the predictors
+
+  # Priors for random effects (e.g., id random effect)
+  prior(normal(0, 2), class = "sd")
+)
+
+# Run the Bayesian model
+domain_model <- brm(C11 ~ Domain + (1|id), 
+             data = trainee_data_C11, 
+             family = cumulative(link = "logit"),
+             prior = prior,
+             chains = 6,           
+             cores = 8,             
+             iter = 10000,          
+             warmup = 2000,        
+             thin = 1,             
+             seed = 123,           
+             control = list(adapt_delta = 0.9995, max_treedepth = 18),  
+             save_pars = save_pars(all = TRUE),  
+             threads = threading(24),  # Parallel computation
+             backend = "cmdstanr")  # Use prior variable here
+
+#Plot summary
+summary(domain_model)
+
+# plot model estimates 
+plot_summs(domain_model)
+
+#Plot the fit of the model (do model predictions align with the data?)
+plot(domain_model, type = "bars", ask=FALSE)
+
+# Run posterior predictive check
+pp_check(domain_model)
+
+```
+
+
+# uni
+```{r, cache=TRUE}
+# Remove NA only in C11
+trainee_data_C11 <- trainee_data %>%
+  filter(!is.na(C11))
+
+# Convert 'C11' to an ordered factor
+trainee_data_C11$C11 <- factor(trainee_data_C11$C11, ordered = TRUE)  
+
+# Convert 'Department' to a factor, NOT ordered 
+trainee_data_C11$Uni <- as.factor(trainee_data_C11$Uni)
+
+# Set priors
+prior <- c(
+  # Prior for the intercept (thresholds between categories)
+  prior(normal(0, 5), class = "Intercept"),  # Allow for flexibility in threshold positions
+
+  # Priors for the coefficients (effects of independent variables)
+  prior(normal(0, 5), class = "b"),          # Priors for the coefficients of the predictors
+
+  # Priors for random effects (e.g., id random effect)
+  prior(normal(0, 2), class = "sd")
+)
+
+# Run the Bayesian model
+uni_model <- brm(C11 ~ Uni + (1|id), 
+             data = trainee_data_C11, 
+             family = cumulative(link = "logit"),
+             prior = prior,
+             chains = 6,           
+             cores = 8,             
+             iter = 10000,          
+             warmup = 2000,        
+             thin = 1,             
+             seed = 123,           
+             control = list(adapt_delta = 0.999, max_treedepth = 18),  
+             save_pars = save_pars(all = TRUE),  
+             threads = threading(24),                     # Parallel computation
+             backend = "cmdstanr")  # Use prior variable here
+
+#Plot summary
+summary(uni_model)
+
+# plot model estimates 
+plot_summs(uni_model)
+
+#Plot the fit of the model (do model predictions align with the data?)
+plot(uni_model, type = "bars", ask=FALSE)
+
+# Run posterior predictive check
+pp_check(uni_model)
+
+
+```
+
+#indpart
+```{r, cache=TRUE}
+# Remove NA only in C11
+trainee_data_C11 <- trainee_data %>%
+  filter(!is.na(C11))
+
+# Convert 'C11' to an ordered factor
+trainee_data_C11$C11 <- factor(trainee_data_C11$C11, ordered = TRUE)  
+
+# Convert 'Department' to a factor, NOT ordered 
+trainee_data_C11$indpart <- factor(trainee_data_C11$indpart, levels = sort(unique(trainee_data_C11$indpart)))
+
+# Set priors
+prior <- c(
+  # Prior for the intercept (thresholds between categories)
+  prior(normal(0, 5), class = "Intercept"),  # Allow for flexibility in threshold positions
+
+  # Priors for the coefficients (effects of independent variables)
+  prior(normal(0, 5), class = "b"),          # Priors for the coefficients of the predictors
+
+  # Priors for random effects (e.g., id random effect)
+  prior(normal(0, 2), class = "sd")
+)
+
+# Run the Bayesian model
+indpart_model <- brm(C11 ~ indpart + (1|id), 
+             data = trainee_data_C11, 
+             family = cumulative(link = "logit"),
+             prior = prior,
+             chains = 6,           
+             cores = 8,             
+             iter = 10000,          
+             warmup = 2000,        
+             thin = 1,             
+             seed = 123,           
+             control = list(adapt_delta = 0.999, max_treedepth = 18),  
+             save_pars = save_pars(all = TRUE),  
+             threads = threading(24),                     # Parallel computation
+             backend = "cmdstanr")  # Use prior variable here
+
+#Plot summary
+summary(indpart_model)
+
+# plot model estimates 
+plot_summs(indpart_model)
+
+#Plot the fit of the model (do model predictions align with the data?)
+plot(indpart_model, type = "bars", ask=FALSE)
+
+# Run posterior predictive check
+pp_check(indpart_model)
+
+
+```
+
+# patentr
+```{r, cache=TRUE}
+# Remove NA only in C11
+trainee_data_C11 <- trainee_data %>%
+  filter(!is.na(C11))
+
+# Convert 'C11' to an ordered factor
+trainee_data_C11$C11 <- factor(trainee_data_C11$C11, ordered = TRUE)  
+
+# Convert 'Department' to a factor, NOT ordered 
+trainee_data_C11$patentr <- factor(trainee_data_C11$patentr, levels = sort(unique(trainee_data_C11$patentr)))
+
+# Set priors
+prior <- c(
+  # Prior for the intercept (thresholds between categories)
+  prior(normal(0, 5), class = "Intercept"),  # Allow for flexibility in threshold positions
+
+  # Priors for the coefficients (effects of independent variables)
+  prior(normal(0, 5), class = "b"),          # Priors for the coefficients of the predictors
+
+  # Priors for random effects (e.g., id random effect)
+  prior(normal(0, 2), class = "sd")
+)
+
+# Run the Bayesian model
+patentr_model <- brm(C11 ~ patentr + (1|id), 
+             data = trainee_data_C11, 
+             family = cumulative(link = "logit"),
+             prior = prior,
+             chains = 6,           
+             cores = 8,             
+             iter = 10000,          
+             warmup = 2000,        
+             thin = 1,             
+             seed = 123,           
+             control = list(adapt_delta = 0.999, max_treedepth = 18),  
+             save_pars = save_pars(all = TRUE),  
+             threads = threading(24),                     # Parallel computation
+             backend = "cmdstanr")  # Use prior variable here
+
+#Plot summary
+summary(patentr_model)
+
+# plot model estimates 
+plot_summs(patentr_model)
+
+#Plot the fit of the model (do model predictions align with the data?)
+plot(patentr_model, type = "bars", ask=FALSE)
+
+# Run posterior predictive check
+pp_check(patentr_model)
+
+
+```
+
+# privatecon
+```{r, cache=TRUE}
+# Remove NA only in C11
+trainee_data_C11 <- trainee_data %>%
+  filter(!is.na(C11))
+
+# Convert 'C11' to an ordered factor
+trainee_data_C11$C11 <- factor(trainee_data_C11$C11, ordered = TRUE)  
+
+# Convert 'Department' to a factor, NOT ordered 
+trainee_data_C11$privatecon <- factor(trainee_data_C11$privatecon, levels = sort(unique(trainee_data_C11$privatecon)))
+
+# Set priors
+prior <- c(
+  # Prior for the intercept (thresholds between categories)
+  prior(normal(0, 5), class = "Intercept"),  # Allow for flexibility in threshold positions
+
+  # Priors for the coefficients (effects of independent variables)
+  prior(normal(0, 5), class = "b"),          # Priors for the coefficients of the predictors
+
+  # Priors for random effects (e.g., id random effect)
+  prior(normal(0, 2), class = "sd")
+)
+
+# Run the Bayesian model
+privatecon_model <- brm(C11 ~ privatecon + (1|id), 
+             data = trainee_data_C11, 
+             family = cumulative(link = "logit"),
+             prior = prior,
+             chains = 6,           
+             cores = 8,             
+             iter = 10000,          
+             warmup = 2000,        
+             thin = 1,             
+             seed = 123,           
+             control = list(adapt_delta = 0.999, max_treedepth = 18),  
+             save_pars = save_pars(all = TRUE),  
+             threads = threading(24),                     # Parallel computation
+             backend = "cmdstanr")  # Use prior variable here
+
+#Plot summary
+summary(privatecon_model)
+
+# plot model estimates 
+plot_summs(privatecon_model)
+
+#Plot the fit of the model (do model predictions align with the data?)
+plot(privatecon_model, type = "bars", ask=FALSE)
+
+# Run posterior predictive check
+pp_check(privatecon_model)
+
+
+```
+
+# Example: Final model C11. The global model includes all predictors whose 80% credible intervals excluded zero were retained for multivariable models. 
+```{r, cache=TRUE}
+# Remove NA only in C11
+fac_data_C11 <- fac_data %>%
+  filter(!is.na(C11))
+
+# Convert 'C11' to an ordered factor
+fac_data_C11$C11 <- factor(fac_data_C11$C11, ordered = TRUE)  
+
+# Convert 'Position' to a factor 
+fac_data_C11$Position <- as.factor(fac_data_C11$Position)
+fac_data_C11$International <- as.factor(fac_data_C11$International)
+fac_data_C11$indpart <- as.factor(fac_data_C11$indpart)
+fac_data_C11$privatecon <- as.factor(fac_data_C11$privatecon)
+
+# Set priors
+prior <- c(
+  # Prior for the intercept (thresholds between categories)
+  prior(normal(0, 5), class = "Intercept"),  # Allow for flexibility in threshold positions
+
+  # Priors for the coefficients (effects of independent variables)
+  prior(normal(0, 5), class = "b"),          # Priors for the coefficients of the predictors
+
+  # Priors for random effects (e.g., id random effect)
+  prior(normal(0, 2), class = "sd")
+)
+
+# Run the Bayesian model
+C11_model <- brm(C11 ~ Gender + Position + International + indpart + privatecon + (1|id), 
+             data = fac_data_C11, 
+             family = cumulative(link = "logit"),
+             prior = prior,
+             chains = 6,           
+             cores = 8,             
+             iter = 10000,          
+             warmup = 2000,        
+             thin = 1,             
+             seed = 123,           
+             control = list(adapt_delta = 0.9995, max_treedepth = 18),  
+             save_pars = save_pars(all = TRUE),  
+             threads = threading(24),                     # Parallel computation
+             backend = "cmdstanr")  # Use prior variable here
+
+#Plot summary
+summary(C11_model)
+
+# plot model estimates 
+plot_summs(C11_model)
+
+#Plot the fit of the model (do model predictions align with the data?)
+plot(C11_model, type = "bars", ask=FALSE)
+
+# Run posterior predictive check
+pp_check(C11_model)
+
+# Calculate conditional and marginal R2 (variance explained by fixed and random effects)
+r2_bayes(C11_model)
+
+```
+
